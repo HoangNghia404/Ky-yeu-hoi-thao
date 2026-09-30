@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sách Điện Tử - Bản Tinh Chỉnh Giao Diện</title>
+    <title>Kỷ yếu hội thảo Đắk Lắk</title>
     <style>
         /* TỔNG THỂ */
         body { 
@@ -33,6 +33,13 @@
             opacity: 0; transition: opacity 0.8s ease;
             overflow: hidden;
         }
+        #flipbook-container.is-zoomed {
+            cursor: grab;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #flipbook-container.is-panning { cursor: grabbing; }
 
         #flipbook-frame {
             display: flex; justify-content: center; align-items: center;
@@ -144,6 +151,12 @@
     <div class="glass-toolbar">
         <button class="tool-btn" id="btn-zoomout" title="Thu nhỏ">-</button>
         <span class="zoom-text" id="zoom-text">100%</span>
+        <button class="tool-btn" id="btn-zoomreset" title="Đưa về kích thước ban đầu (100%)" aria-label="Đưa về kích thước ban đầu (100%)">
+            <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 11a9 9 0 1 1 2.64 6.36" />
+                <path d="M3 4v7h7" />
+            </svg>
+        </button>
         <button class="tool-btn" id="btn-zoomin" title="Phóng to">+</button>
         
         <div class="divider"></div>
@@ -320,6 +333,7 @@
                 container.style.overflow = isZoomed ? 'auto' : 'hidden';
                 container.style.justifyContent = isZoomed ? 'flex-start' : 'center';
                 container.style.alignItems = isZoomed ? 'flex-start' : 'center';
+                container.classList.toggle('is-zoomed', isZoomed);
 
                 if (pageFlip) {
                     const settings = pageFlip.getSettings();
@@ -418,12 +432,59 @@
             document.getElementById('btn-zoomout').addEventListener('click', () => {
                 setZoomLevel(currentZoom - 0.2);
             });
+            document.getElementById('btn-zoomreset').addEventListener('click', () => {
+                if (pageFlip.getState() !== 'read') return;
+                currentZoom = 1;
+                updateZoomLayout();
+                flipbookContainer.scrollLeft = 0;
+                flipbookContainer.scrollTop = 0;
+                updateZoomDisplay();
+            });
 
             let pinchStartDistance = 0;
             let pinchStartZoom = currentZoom;
             const flipbookContainer = document.getElementById('flipbook-container');
+            let pointerPan = null;
+            let touchPan = null;
+
+            function finishPointerPan() {
+                if (!pointerPan) return;
+                const pointerId = pointerPan.pointerId;
+                pointerPan = null;
+                flipbookContainer.classList.remove('is-panning');
+                if (flipbookContainer.hasPointerCapture(pointerId)) {
+                    flipbookContainer.releasePointerCapture(pointerId);
+                }
+            }
+
+            flipbookContainer.addEventListener('pointerdown', event => {
+                if (currentZoom <= 1 || event.pointerType === 'touch' || event.button !== 0) return;
+                pointerPan = {
+                    pointerId: event.pointerId,
+                    x: event.clientX,
+                    y: event.clientY,
+                    scrollLeft: flipbookContainer.scrollLeft,
+                    scrollTop: flipbookContainer.scrollTop
+                };
+                flipbookContainer.classList.add('is-panning');
+                flipbookContainer.setPointerCapture(event.pointerId);
+                event.preventDefault();
+                event.stopPropagation();
+            }, { capture: true });
+            flipbookContainer.addEventListener('pointermove', event => {
+                if (!pointerPan || pointerPan.pointerId !== event.pointerId) return;
+                flipbookContainer.scrollLeft = pointerPan.scrollLeft - (event.clientX - pointerPan.x);
+                flipbookContainer.scrollTop = pointerPan.scrollTop - (event.clientY - pointerPan.y);
+                event.preventDefault();
+                event.stopPropagation();
+            }, { capture: true });
+            ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(eventName => {
+                flipbookContainer.addEventListener(eventName, finishPointerPan, { capture: true });
+            });
+
             flipbookContainer.addEventListener('touchstart', event => {
                 if (event.touches.length === 2) {
+                    touchPan = null;
                     isPinching = true;
                     pinchStartSwipeDistance = pageFlip.getSettings().swipeDistance;
                     pageFlip.getSettings().swipeDistance = Number.MAX_SAFE_INTEGER;
@@ -434,21 +495,58 @@
                         secondTouch.clientY - firstTouch.clientY
                     );
                     pinchStartZoom = currentZoom;
+                    event.preventDefault();
+                    event.stopPropagation();
+                } else if (event.touches.length === 1 && currentZoom > 1) {
+                    const touch = event.touches[0];
+                    touchPan = {
+                        identifier: touch.identifier,
+                        x: touch.clientX,
+                        y: touch.clientY,
+                        scrollLeft: flipbookContainer.scrollLeft,
+                        scrollTop: flipbookContainer.scrollTop
+                    };
+                    event.preventDefault();
+                    event.stopPropagation();
                 }
-            }, { passive: true });
+            }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchmove', event => {
-                if (event.touches.length !== 2 || !pinchStartDistance) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const [firstTouch, secondTouch] = event.touches;
-                const distance = Math.hypot(
-                    secondTouch.clientX - firstTouch.clientX,
-                    secondTouch.clientY - firstTouch.clientY
-                );
-                setZoomLevel(pinchStartZoom * distance / pinchStartDistance);
+                if (isPinching && event.touches.length === 2 && pinchStartDistance) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const [firstTouch, secondTouch] = event.touches;
+                    const distance = Math.hypot(
+                        secondTouch.clientX - firstTouch.clientX,
+                        secondTouch.clientY - firstTouch.clientY
+                    );
+                    setZoomLevel(pinchStartZoom * distance / pinchStartDistance);
+                    return;
+                }
+
+                if (isPinching) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+
+                if (touchPan && event.touches.length === 1) {
+                    const touch = [...event.touches].find(item => item.identifier === touchPan.identifier);
+                    if (!touch) return;
+                    flipbookContainer.scrollLeft = touchPan.scrollLeft - (touch.clientX - touchPan.x);
+                    flipbookContainer.scrollTop = touchPan.scrollTop - (touch.clientY - touchPan.y);
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchend', event => {
-                if (isPinching && event.touches.length < 2) {
+                if (isPinching && event.touches.length > 0) {
+                    pinchStartDistance = 0;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+
+                if (isPinching) {
                     pageFlip.userStop({ x: 0, y: 0 }, true);
                     isPinching = false;
                     pinchStartDistance = 0;
@@ -459,7 +557,23 @@
                         }
                     }, 0);
                 }
-            }, { passive: true });
+                if (event.touches.length === 0) touchPan = null;
+            }, { passive: false, capture: true });
+            flipbookContainer.addEventListener('touchcancel', event => {
+                if (!isPinching) return;
+                event.preventDefault();
+                event.stopPropagation();
+                pageFlip.userStop({ x: 0, y: 0 }, true);
+                isPinching = false;
+                pinchStartDistance = 0;
+                window.setTimeout(() => {
+                    if (pinchStartSwipeDistance !== null) {
+                        pageFlip.getSettings().swipeDistance = pinchStartSwipeDistance;
+                        pinchStartSwipeDistance = null;
+                    }
+                    pageFlip.userStop({ x: 0, y: 0 }, true);
+                }, 300);
+            }, { passive: false, capture: true });
 
             // NHẬP SỐ TRANG
             const pageInput = document.getElementById('page-input');

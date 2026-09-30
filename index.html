@@ -169,6 +169,20 @@
         <button class="tool-btn" id="btn-next" title="Trang sau">❯</button>
         
         <div class="divider"></div>
+
+        <button class="tool-btn" id="btn-toc" title="Đến trang mục lục" aria-label="Đến trang mục lục">
+            <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 6h11M9 12h11M9 18h11" />
+                <path d="M4 6h.01M4 12h.01M4 18h.01" />
+            </svg>
+        </button>
+        <a class="tool-btn" id="btn-download-pdf" href="book.pdf" download="Ky-yeu-hoi-thao-Dak-Lak.pdf" title="Tải file PDF" aria-label="Tải file PDF">
+            <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 3v12" />
+                <path d="m7 10 5 5 5-5" />
+                <path d="M5 21h14" />
+            </svg>
+        </a>
         
         <button class="tool-btn" id="btn-sound" title="Bật/Tắt âm thanh" aria-label="Tắt âm thanh" aria-pressed="true">
             <svg class="tool-icon" id="sound-on-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -220,7 +234,7 @@
             document.getElementById('total-pages').innerText = `/ ${totalPages}`;
             document.getElementById('page-input').max = totalPages;
             const pdfPageElements = [];
-            
+
             for (let i = 1; i <= totalPages; i++) {
                 const pageDiv = document.createElement('div');
                 pageDiv.className = 'page';
@@ -370,7 +384,7 @@
             updateZoomDisplay();
             window.addEventListener('resize', () => {
                 const nextSinglePageMode = singlePageMode();
-                const currentPageNumber = getPdfPageNumber(pageFlip.getCurrentPageIndex());
+                const currentPageIndex = pageFlip.getCurrentPageIndex();
                 const settings = pageFlip.getSettings();
                 settings.minWidth = portraitThreshold();
                 settings.minHeight = Math.round(settings.minWidth / pageAspect);
@@ -379,7 +393,7 @@
                 if (nextSinglePageMode !== pageLayoutIsSingle) {
                     pageLayoutIsSingle = nextSinglePageMode;
                     pageFlip.updateFromHtml(pdfPageElements);
-                    pageFlip.turnToPage(currentPageNumber - 1);
+                    pageFlip.turnToPage(currentPageIndex);
                 } else {
                     pageFlip.update();
                 }
@@ -424,6 +438,10 @@
             // ĐIỀU HƯỚNG
             document.getElementById('btn-prev').addEventListener('click', () => pageFlip.flipPrev());
             document.getElementById('btn-next').addEventListener('click', () => pageFlip.flipNext());
+            document.getElementById('btn-toc').addEventListener('click', () => {
+                if (pageFlip.getState() !== 'read') return;
+                pageFlip.flip(2);
+            });
 
             // ÂM THANH
             const btnSound = document.getElementById('btn-sound');
@@ -456,6 +474,28 @@
             const flipbookContainer = document.getElementById('flipbook-container');
             let pointerPan = null;
             let touchPan = null;
+            let edgeHoldTimer = 0;
+            let edgeHoldStart = null;
+            let edgeHoldActive = false;
+            let edgeHoldMoved = false;
+
+            function clearEdgeHold() {
+                window.clearTimeout(edgeHoldTimer);
+                edgeHoldTimer = 0;
+                edgeHoldStart = null;
+                edgeHoldActive = false;
+                edgeHoldMoved = false;
+            }
+
+            function retractEdgePreview() {
+                if (!edgeHoldActive || !edgeHoldStart) return;
+                pageFlip.userStop(edgeHoldStart.previewPoint, true);
+                const contentBlock = pageFlip.getUI().getDistElement();
+                pageFlip.getFlipController().showCorner({
+                    x: contentBlock.clientWidth / 2,
+                    y: contentBlock.clientHeight / 2
+                });
+            }
 
             function finishPointerPan() {
                 if (!pointerPan) return;
@@ -494,6 +534,8 @@
 
             flipbookContainer.addEventListener('touchstart', event => {
                 if (event.touches.length === 2) {
+                    retractEdgePreview();
+                    clearEdgeHold();
                     touchPan = null;
                     flipbookContainer.classList.remove('is-panning');
                     isPinching = true;
@@ -509,6 +551,7 @@
                     event.preventDefault();
                     event.stopPropagation();
                 } else if (event.touches.length === 1 && currentZoom > 1) {
+                    clearEdgeHold();
                     const touch = event.touches[0];
                     touchPan = {
                         identifier: touch.identifier,
@@ -519,6 +562,40 @@
                     };
                     flipbookContainer.classList.add('is-panning');
                     event.stopPropagation();
+                } else if (event.touches.length === 1 && pageLayoutIsSingle) {
+                    const touch = event.touches[0];
+                    const visiblePage = [...flipbookEl.querySelectorAll('.stf__item')]
+                        .find(page => page.offsetWidth > 0);
+                    if (!visiblePage) return;
+
+                    const pageRect = visiblePage.getBoundingClientRect();
+                    const edgeWidth = Math.min(36, pageRect.width * 0.1);
+                    const nearLeftEdge = touch.clientX <= pageRect.left + edgeWidth;
+                    const nearRightEdge = touch.clientX >= pageRect.right - edgeWidth;
+                    if (!nearLeftEdge && !nearRightEdge) return;
+
+                    const renderRect = pageFlip.getBoundsRect();
+                    const operatingDistance = Math.sqrt(
+                        renderRect.pageWidth ** 2 + renderRect.height ** 2
+                    ) / 5;
+                    const contentBlock = pageFlip.getUI().getDistElement();
+                    const upperCorner = touch.clientY < pageRect.top + pageRect.height / 2;
+                    edgeHoldStart = {
+                        touchX: touch.clientX,
+                        touchY: touch.clientY,
+                        previewPoint: {
+                            x: nearLeftEdge
+                                ? renderRect.left + operatingDistance / 2
+                                : renderRect.left + renderRect.width - 10,
+                            y: renderRect.top + (upperCorner ? 10 : renderRect.height - 10)
+                        },
+                        contentWidth: contentBlock.clientWidth
+                    };
+                    edgeHoldTimer = window.setTimeout(() => {
+                        if (!edgeHoldStart || currentZoom > 1 || pageFlip.getState() !== 'read') return;
+                        pageFlip.getFlipController().showCorner(edgeHoldStart.previewPoint);
+                        edgeHoldActive = pageFlip.getState() === 'fold_corner';
+                    }, 280);
                 }
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchmove', event => {
@@ -540,17 +617,42 @@
                     return;
                 }
 
+                if (edgeHoldStart && event.touches.length === 1) {
+                    const touch = event.touches[0];
+                    const moved = Math.hypot(
+                        touch.clientX - edgeHoldStart.touchX,
+                        touch.clientY - edgeHoldStart.touchY
+                    );
+                    if (!edgeHoldActive && moved > 8) clearEdgeHold();
+                    else if (edgeHoldActive && moved > 8) edgeHoldMoved = true;
+                }
+
                 if (touchPan && event.touches.length === 1) {
                     event.stopPropagation();
                     return;
                 }
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchend', event => {
+                if (edgeHoldActive && !edgeHoldMoved) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    retractEdgePreview();
+                    clearEdgeHold();
+                    return;
+                }
+
+                if (edgeHoldActive) clearEdgeHold();
                 if (isPinching && event.touches.length > 0) {
                     pinchStartDistance = 0;
                     event.preventDefault();
                     event.stopPropagation();
                     return;
+                }
+
+                if (edgeHoldTimer && !edgeHoldActive) clearEdgeHold();
+                if (edgeHoldActive) {
+                    edgeHoldActive = false;
+                    edgeHoldStart = null;
                 }
 
                 if (isPinching) {
@@ -570,6 +672,12 @@
                 }
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchcancel', event => {
+                if (edgeHoldActive) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    retractEdgePreview();
+                    clearEdgeHold();
+                }
                 if (!isPinching) return;
                 event.preventDefault();
                 event.stopPropagation();

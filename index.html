@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sách Điện Tử - Bản Tinh Chỉnh Giao Diện</title>
+    <style>
+        /* TỔNG THỂ */
+        body { 
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            margin: 0; display: flex; flex-direction: column; 
+            height: 100vh; height: 100dvh; overflow: hidden; font-family: 'Segoe UI', Tahoma, sans-serif;
+            color: white;
+        }
+
+        #loading-screen {
+            position: absolute; inset: 0; z-index: 1000;
+            background: #0f172a; display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            transition: opacity 0.5s ease;
+        }
+        .spinner {
+            width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: #3b82f6; border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 15px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* KHUNG CHỨA SÁCH (Tự động Fit) */
+        #flipbook-container {
+            display: flex; justify-content: center; align-items: center;
+            width: 100%; height: calc(100vh - 74px); height: calc(100dvh - 74px);
+            opacity: 0; transition: opacity 0.8s ease;
+            overflow: hidden;
+        }
+
+        #flipbook-frame {
+            display: flex; justify-content: center; align-items: center;
+            flex: 0 0 auto; max-width: 100%; max-height: 100%;
+        }
+        
+        .flip-book { 
+            box-shadow: 0 15px 50px rgba(0,0,0,0.6); 
+            transition: transform 0.2s ease-out; /* Mượt mà khi Zoom */
+            transform-origin: center center;
+        }
+        
+        /* HIỆU ỨNG ĐỔ BÓNG GÁY SÁCH (Giống sách thật) */
+        .page { 
+            background-color: #fcfcfc; 
+            display: flex; justify-content: center; align-items: center; 
+            overflow: hidden; 
+            background-image: none;
+            box-shadow: inset 0 0 8px rgba(0,0,0,0.04);
+            border-left: 1px solid rgba(0,0,0,0.05);
+            border-right: 1px solid rgba(0,0,0,0.05);
+        }
+        .page.--left {
+            background-image: linear-gradient(to left, rgba(15,23,42,0.2), rgba(15,23,42,0.06) 7%, transparent 24%);
+        }
+        .page.--right {
+            background-image: linear-gradient(to right, rgba(15,23,42,0.2), rgba(15,23,42,0.06) 7%, transparent 24%);
+        }
+        .page.--left::after, .page.--right::after {
+            content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+        }
+        .page.--left::after {
+            background: linear-gradient(to left, rgba(15,23,42,0.26), rgba(15,23,42,0.08) 5%, transparent 18%);
+        }
+        .page.--right::after {
+            background: linear-gradient(to right, rgba(15,23,42,0.26), rgba(15,23,42,0.08) 5%, transparent 18%);
+        }
+        canvas { width: 100%; height: 100%; object-fit: contain; }
+
+        /* THANH CÔNG CỤ TÙY CHỈNH */
+        .glass-toolbar {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(20, 30, 48, 0.75);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 40px; padding: 8px 20px;
+            display: flex; gap: 8px; align-items: center; justify-content: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            z-index: 100; flex-wrap: wrap; width: max-content; max-width: 95vw;
+        }
+        .tool-btn {
+            background: rgba(255,255,255,0.08); border: none; color: white;
+            width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
+            font-size: 15px; font-weight: bold; transition: all 0.2s;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .tool-btn:hover { background: #3b82f6; }
+        
+        .zoom-text {
+            font-size: 13px; font-weight: bold; min-width: 45px; text-align: center; color: #cbd5e1;
+        }
+
+        .page-info { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #cbd5e1; }
+        
+        /* ẨN MŨI TÊN TRÊN Ô NHẬP SỐ */
+        .page-input {
+            width: 40px; padding: 6px; text-align: center; border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.4);
+            color: white; font-weight: bold; outline: none;
+            -moz-appearance: textfield; /* Ẩn mũi tên Firefox */
+        }
+        .page-input::-webkit-outer-spin-button,
+        .page-input::-webkit-inner-spin-button {
+            -webkit-appearance: none; margin: 0; /* Ẩn mũi tên Chrome/Safari */
+        }
+        .page-input:focus { border-color: #3b82f6; }
+        
+        .divider { width: 1px; height: 20px; background: rgba(255,255,255,0.2); margin: 0 4px; }
+
+        @media (max-width: 600px) {
+            .glass-toolbar { padding: 6px 12px; }
+            .tool-btn { width: 32px; height: 32px; }
+            .page-input { width: 35px; }
+            .zoom-text { min-width: 38px; font-size: 12px; }
+            #flipbook-container { touch-action: pan-x pan-y; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div class="spinner"></div>
+        <div id="loading-text" style="font-size: 14px; color: #cbd5e1;">Đang thiết lập dữ liệu...</div>
+    </div>
+
+    <audio id="flip-sound" src="https://actions.google.com/sounds/v1/foley/book_page_turn.ogg" preload="auto"></audio>
+
+    <div id="flipbook-container">
+        <div id="flipbook-frame">
+            <div id="flipbook" class="flip-book"></div>
+        </div>
+    </div>
+
+    <div class="glass-toolbar">
+        <button class="tool-btn" id="btn-zoomout" title="Thu nhỏ">-</button>
+        <span class="zoom-text" id="zoom-text">100%</span>
+        <button class="tool-btn" id="btn-zoomin" title="Phóng to">+</button>
+        
+        <div class="divider"></div>
+        
+        <button class="tool-btn" id="btn-prev" title="Trang trước">❮</button>
+        <div class="page-info">
+            <input type="number" id="page-input" class="page-input" value="1" min="1">
+            <span id="total-pages">/ ...</span>
+        </div>
+        <button class="tool-btn" id="btn-next" title="Trang sau">❯</button>
+        
+        <div class="divider"></div>
+        
+        <button class="tool-btn" id="btn-sound" title="Bật/Tắt âm thanh">🔊</button>
+        <button class="tool-btn" id="btn-fullscreen" title="Toàn màn hình">⛶</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/page-flip/dist/js/page-flip.browser.min.js"></script>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        const pdfUrl = 'book.pdf'; 
+        let pdfDoc = null;
+        let pageFlip = null;
+        const renderedPages = new Set(); 
+        const renderedScales = new Map();
+        const pageRenderPromises = new Map();
+        
+        let currentZoom = 1.0;
+        let isSoundEnabled = true;
+        let zoomRenderTimer = 0;
+
+        pdfjsLib.getDocument(pdfUrl).promise.then(async function(pdf) {
+            pdfDoc = pdf;
+            const totalPages = pdf.numPages;
+            const firstPage = await pdfDoc.getPage(1);
+            const pageSize = firstPage.getViewport({ scale: 1 });
+            const pageAspect = pageSize.width / pageSize.height;
+            const flipbookEl = document.getElementById('flipbook');
+            document.getElementById('total-pages').innerText = `/ ${totalPages}`;
+            document.getElementById('page-input').max = totalPages;
+            
+            for (let i = 1; i <= totalPages; i++) {
+                const pageDiv = document.createElement('div');
+                pageDiv.className = 'page';
+                pageDiv.dataset.density = 'soft';
+                
+                const canvas = document.createElement('canvas');
+                canvas.id = `canvas-page-${i}`;
+                pageDiv.appendChild(canvas);
+                flipbookEl.appendChild(pageDiv);
+            }
+
+            async function renderPage(pageNum, zoom = currentZoom) {
+                if (pageNum < 1 || pageNum > totalPages) return;
+
+                const pageCssWidth = pageFlip
+                    ? pageFlip.getBoundsRect().pageWidth
+                    : pageSize.width;
+                const requestedScale = Math.max(1.5, pageCssWidth * window.devicePixelRatio * zoom / pageSize.width);
+                const maxScaleByPixels = Math.sqrt(6000000 / (pageSize.width * pageSize.height));
+                const renderScale = Math.min(requestedScale, maxScaleByPixels);
+
+                if ((renderedScales.get(pageNum) || 0) >= renderScale) return;
+                const pendingRender = pageRenderPromises.get(pageNum);
+                if (pendingRender) {
+                    await pendingRender;
+                    return renderPage(pageNum, zoom);
+                }
+
+                const renderPromise = (async () => {
+                    const page = await pdfDoc.getPage(pageNum);
+                    const canvas = document.getElementById(`canvas-page-${pageNum}`);
+                    const viewport = page.getViewport({ scale: renderScale });
+                    canvas.width = Math.ceil(viewport.width);
+                    canvas.height = Math.ceil(viewport.height);
+
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                    renderedPages.add(pageNum);
+                    renderedScales.set(pageNum, renderScale);
+                })();
+                pageRenderPromises.set(pageNum, renderPromise);
+                try {
+                    await renderPromise;
+                } finally {
+                    if (pageRenderPromises.get(pageNum) === renderPromise) {
+                        pageRenderPromises.delete(pageNum);
+                    }
+                }
+            }
+
+            document.getElementById('loading-text').innerText = 'Đang căn chỉnh tỷ lệ...';
+            await Promise.all([renderPage(1), renderPage(2), renderPage(3)]);
+
+            function fitFlipbook() {
+                const toolbarHeight = document.querySelector('.glass-toolbar').getBoundingClientRect().height;
+                const availableHeight = Math.min(1260, Math.max(180, window.innerHeight - toolbarHeight - 44));
+                const availableWidth = Math.max(160, window.innerWidth - 24);
+                const isMobile = window.matchMedia('(max-width: 600px)').matches;
+                const useSinglePage = isMobile || window.innerWidth < window.innerHeight;
+                const bookAspect = useSinglePage ? pageAspect : pageAspect * 2;
+                const width = Math.min(availableWidth, availableHeight * bookAspect);
+                const height = width / bookAspect;
+
+                const frame = document.getElementById('flipbook-frame');
+                frame.style.width = `${Math.floor(width)}px`;
+                frame.style.height = `${Math.floor(height)}px`;
+            }
+
+            fitFlipbook();
+
+            // CẤU HÌNH THƯ VIỆN LẬT TRANG
+            const singlePageMode = () => (
+                window.matchMedia('(max-width: 600px)').matches || window.innerWidth < window.innerHeight
+            );
+            const portraitThreshold = () => singlePageMode() ? 450 : 120;
+            pageFlip = new St.PageFlip(flipbookEl, {
+                width: pageSize.width, height: pageSize.height,
+                size: "stretch",
+                minWidth: portraitThreshold(), maxWidth: 900,
+                minHeight: Math.round(portraitThreshold() / pageAspect), maxHeight: Math.round(900 / pageAspect),
+                showCover: true,
+                mobileScrollSupport: true,
+                usePortrait: true,
+                maxShadowOpacity: 0.4
+            });
+
+            pageFlip.loadFromHTML(document.querySelectorAll('.page'));
+            [0, totalPages - 1].forEach(pageIndex => {
+                const coverPage = pageFlip.getPage(pageIndex);
+                coverPage.setDensity('soft');
+                coverPage.setDrawingDensity('soft');
+            });
+            function updateZoomDisplay() {
+                document.getElementById('flipbook-container').style.overflow = currentZoom > 1 ? 'auto' : 'hidden';
+                flipbookEl.style.transform = `scale(${currentZoom})`;
+                document.getElementById('zoom-text').innerText = `${Math.round(currentZoom * 100)}%`;
+                window.clearTimeout(zoomRenderTimer);
+                zoomRenderTimer = window.setTimeout(() => {
+                    const pageNumber = pageFlip.getCurrentPageIndex() + 1;
+                    [pageNumber - 1, pageNumber, pageNumber + 1, pageNumber + 2].forEach(number => {
+                        renderPage(number, currentZoom);
+                    });
+                }, 120);
+            }
+            function setZoomLevel(zoom) {
+                currentZoom = Math.max(0.4, Math.min(3, zoom));
+                updateZoomDisplay();
+            }
+            updateZoomDisplay();
+            window.addEventListener('resize', () => {
+                const settings = pageFlip.getSettings();
+                settings.minWidth = portraitThreshold();
+                settings.minHeight = Math.round(settings.minWidth / pageAspect);
+                fitFlipbook();
+                pageFlip.update();
+                requestAnimationFrame(updateZoomDisplay);
+            });
+
+            // Hiển thị giao diện
+            const loadingScreen = document.getElementById('loading-screen');
+            loadingScreen.style.opacity = '0';
+            setTimeout(() => { loadingScreen.style.display = 'none'; }, 500);
+            document.getElementById('flipbook-container').style.opacity = '1';
+
+            // XỬ LÝ LẬT TRANG & ÂM THANH
+            const flipAudio = document.getElementById('flip-sound');
+            
+            pageFlip.on('flip', (e) => {
+                const currentPage = Math.max(1, Math.min(totalPages, e.data + 1));
+                document.getElementById('page-input').value = currentPage;
+                updateZoomDisplay();
+
+                if (isSoundEnabled) {
+                    flipAudio.currentTime = 0;
+                    flipAudio.play().catch(()=>{});
+                }
+
+                renderPage(currentPage);
+                renderPage(currentPage + 1); renderPage(currentPage + 2);
+                renderPage(currentPage - 1); renderPage(currentPage - 2);
+
+                renderedPages.forEach(p => {
+                    if (Math.abs(p - currentPage) > 5) {
+                        const canvas = document.getElementById(`canvas-page-${p}`);
+                        canvas.width = 0; canvas.height = 0;
+                        renderedPages.delete(p);
+                        renderedScales.delete(p);
+                    }
+                });
+            });
+
+            // ĐIỀU HƯỚNG
+            document.getElementById('btn-prev').addEventListener('click', () => pageFlip.flipPrev());
+            document.getElementById('btn-next').addEventListener('click', () => pageFlip.flipNext());
+
+            // ÂM THANH
+            const btnSound = document.getElementById('btn-sound');
+            btnSound.addEventListener('click', () => {
+                isSoundEnabled = !isSoundEnabled;
+                btnSound.innerText = isSoundEnabled ? '🔊' : '🔇';
+                if(isSoundEnabled) { flipAudio.play().catch(()=>{}); }
+            });
+
+            // PHÓNG TO / THU NHỎ & HIỂN THỊ %
+            document.getElementById('btn-zoomin').addEventListener('click', () => {
+                setZoomLevel(currentZoom + 0.2);
+            });
+            document.getElementById('btn-zoomout').addEventListener('click', () => {
+                setZoomLevel(currentZoom - 0.2);
+            });
+
+            let pinchStartDistance = 0;
+            let pinchStartZoom = currentZoom;
+            const flipbookContainer = document.getElementById('flipbook-container');
+            flipbookContainer.addEventListener('touchstart', event => {
+                if (event.touches.length === 2) {
+                    const [firstTouch, secondTouch] = event.touches;
+                    pinchStartDistance = Math.hypot(
+                        secondTouch.clientX - firstTouch.clientX,
+                        secondTouch.clientY - firstTouch.clientY
+                    );
+                    pinchStartZoom = currentZoom;
+                }
+            }, { passive: true });
+            flipbookContainer.addEventListener('touchmove', event => {
+                if (event.touches.length !== 2 || !pinchStartDistance) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const [firstTouch, secondTouch] = event.touches;
+                const distance = Math.hypot(
+                    secondTouch.clientX - firstTouch.clientX,
+                    secondTouch.clientY - firstTouch.clientY
+                );
+                setZoomLevel(pinchStartZoom * distance / pinchStartDistance);
+            }, { passive: false, capture: true });
+            flipbookContainer.addEventListener('touchend', event => {
+                if (event.touches.length < 2) pinchStartDistance = 0;
+            }, { passive: true });
+
+            // NHẬP SỐ TRANG
+            const pageInput = document.getElementById('page-input');
+            pageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    let targetPage = parseInt(pageInput.value);
+                    if (targetPage >= 1 && targetPage <= totalPages) {
+                        Promise.all([renderPage(targetPage), renderPage(targetPage+1)]).then(() => {
+                            pageFlip.flip(targetPage - 1);
+                        });
+                    }
+                }
+            });
+
+            // TOÀN MÀN HÌNH
+            document.getElementById('btn-fullscreen').addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                } else {
+                    if (document.exitFullscreen) document.exitFullscreen();
+                }
+            });
+
+        }).catch(err => {
+            document.getElementById('loading-text').innerText = 'Lỗi tải PDF: ' + err.message;
+        });
+    </script>
+</body>
+</html>

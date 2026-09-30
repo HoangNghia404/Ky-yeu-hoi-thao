@@ -35,7 +35,7 @@
         }
         #flipbook-container.is-zoomed {
             cursor: grab;
-            touch-action: none;
+            touch-action: pan-x pan-y;
             user-select: none;
             -webkit-user-select: none;
         }
@@ -216,6 +216,7 @@
             const singlePageMode = () => (
                 Math.min(window.innerWidth, window.innerHeight) <= 600 || window.innerWidth < window.innerHeight
             );
+            let pageLayoutIsSingle = singlePageMode();
             document.getElementById('total-pages').innerText = `/ ${totalPages}`;
             document.getElementById('page-input').max = totalPages;
             const pdfPageElements = [];
@@ -296,7 +297,7 @@
                 size: "stretch",
                 minWidth: portraitThreshold(), maxWidth: 900,
                 minHeight: Math.round(portraitThreshold() / pageAspect), maxHeight: Math.round(900 / pageAspect),
-                showCover: true,
+                showCover: !pageLayoutIsSingle,
                 mobileScrollSupport: true,
                 usePortrait: true,
                 maxShadowOpacity: 0.4
@@ -304,7 +305,7 @@
 
             pageFlip.loadFromHTML(pdfPageElements);
             function setCoverDensity() {
-                const density = singlePageMode() ? 'soft' : 'hard';
+                const density = pageLayoutIsSingle ? 'soft' : 'hard';
                 [0, totalPages - 1].forEach(pageIndex => {
                     const coverPage = pageFlip.getPage(pageIndex);
                     coverPage.setDensity(density);
@@ -368,11 +369,20 @@
             }
             updateZoomDisplay();
             window.addEventListener('resize', () => {
+                const nextSinglePageMode = singlePageMode();
+                const currentPageNumber = getPdfPageNumber(pageFlip.getCurrentPageIndex());
                 const settings = pageFlip.getSettings();
                 settings.minWidth = portraitThreshold();
                 settings.minHeight = Math.round(settings.minWidth / pageAspect);
+                settings.showCover = !nextSinglePageMode;
                 fitFlipbook();
-                pageFlip.update();
+                if (nextSinglePageMode !== pageLayoutIsSingle) {
+                    pageLayoutIsSingle = nextSinglePageMode;
+                    pageFlip.updateFromHtml(pdfPageElements);
+                    pageFlip.turnToPage(currentPageNumber - 1);
+                } else {
+                    pageFlip.update();
+                }
                 setCoverDensity();
                 updateZoomLayout();
                 requestAnimationFrame(updateZoomDisplay);
@@ -485,6 +495,7 @@
             flipbookContainer.addEventListener('touchstart', event => {
                 if (event.touches.length === 2) {
                     touchPan = null;
+                    flipbookContainer.classList.remove('is-panning');
                     isPinching = true;
                     pinchStartSwipeDistance = pageFlip.getSettings().swipeDistance;
                     pageFlip.getSettings().swipeDistance = Number.MAX_SAFE_INTEGER;
@@ -506,7 +517,7 @@
                         scrollLeft: flipbookContainer.scrollLeft,
                         scrollTop: flipbookContainer.scrollTop
                     };
-                    event.preventDefault();
+                    flipbookContainer.classList.add('is-panning');
                     event.stopPropagation();
                 }
             }, { passive: false, capture: true });
@@ -530,12 +541,8 @@
                 }
 
                 if (touchPan && event.touches.length === 1) {
-                    const touch = [...event.touches].find(item => item.identifier === touchPan.identifier);
-                    if (!touch) return;
-                    flipbookContainer.scrollLeft = touchPan.scrollLeft - (touch.clientX - touchPan.x);
-                    flipbookContainer.scrollTop = touchPan.scrollTop - (touch.clientY - touchPan.y);
-                    event.preventDefault();
                     event.stopPropagation();
+                    return;
                 }
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchend', event => {
@@ -557,7 +564,10 @@
                         }
                     }, 0);
                 }
-                if (event.touches.length === 0) touchPan = null;
+                if (event.touches.length === 0) {
+                    touchPan = null;
+                    flipbookContainer.classList.remove('is-panning');
+                }
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchcancel', event => {
                 if (!isPinching) return;

@@ -36,15 +36,16 @@
 
         #flipbook-frame {
             display: flex; justify-content: center; align-items: center;
-            flex: 0 0 auto; max-width: 100%; max-height: 100%;
+            flex: 0 0 auto;
         }
         
         .flip-book { 
             box-shadow: 0 15px 50px rgba(0,0,0,0.6); 
-            transition: transform 0.2s ease-out; /* Mượt mà khi Zoom */
-            transform-origin: center center;
         }
-        
+        .flip-book.stf__parent {
+            min-width: 0 !important;
+            min-height: 0 !important;
+        }
         /* HIỆU ỨNG ĐỔ BÓNG GÁY SÁCH (Giống sách thật) */
         .page { 
             background-color: #fcfcfc; 
@@ -90,6 +91,10 @@
             display: flex; justify-content: center; align-items: center;
         }
         .tool-btn:hover { background: #3b82f6; }
+        .tool-icon { width: 18px; height: 18px; flex: 0 0 auto; }
+        #sound-off-icon { display: none; }
+        #btn-sound.is-muted #sound-on-icon { display: none; }
+        #btn-sound.is-muted #sound-off-icon { display: block; }
         
         .zoom-text {
             font-size: 13px; font-weight: bold; min-width: 45px; text-align: center; color: #cbd5e1;
@@ -152,7 +157,18 @@
         
         <div class="divider"></div>
         
-        <button class="tool-btn" id="btn-sound" title="Bật/Tắt âm thanh">🔊</button>
+        <button class="tool-btn" id="btn-sound" title="Bật/Tắt âm thanh" aria-label="Tắt âm thanh" aria-pressed="true">
+            <svg class="tool-icon" id="sound-on-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+            </svg>
+            <svg class="tool-icon" id="sound-off-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+                <path d="m16 9 5 6" />
+                <path d="m21 9-5 6" />
+            </svg>
+        </button>
         <button class="tool-btn" id="btn-fullscreen" title="Toàn màn hình">⛶</button>
     </div>
 
@@ -172,6 +188,10 @@
         let currentZoom = 1.0;
         let isSoundEnabled = true;
         let zoomRenderTimer = 0;
+        let fitWidth = 0;
+        let fitHeight = 0;
+        let isPinching = false;
+        let pinchStartSwipeDistance = null;
 
         pdfjsLib.getDocument(pdfUrl).promise.then(async function(pdf) {
             pdfDoc = pdf;
@@ -180,8 +200,12 @@
             const pageSize = firstPage.getViewport({ scale: 1 });
             const pageAspect = pageSize.width / pageSize.height;
             const flipbookEl = document.getElementById('flipbook');
+            const singlePageMode = () => (
+                Math.min(window.innerWidth, window.innerHeight) <= 600 || window.innerWidth < window.innerHeight
+            );
             document.getElementById('total-pages').innerText = `/ ${totalPages}`;
             document.getElementById('page-input').max = totalPages;
+            const pdfPageElements = [];
             
             for (let i = 1; i <= totalPages; i++) {
                 const pageDiv = document.createElement('div');
@@ -191,16 +215,18 @@
                 const canvas = document.createElement('canvas');
                 canvas.id = `canvas-page-${i}`;
                 pageDiv.appendChild(canvas);
-                flipbookEl.appendChild(pageDiv);
+                pdfPageElements.push(pageDiv);
             }
 
-            async function renderPage(pageNum, zoom = currentZoom) {
+            flipbookEl.replaceChildren(...pdfPageElements);
+
+            async function renderPage(pageNum) {
                 if (pageNum < 1 || pageNum > totalPages) return;
 
                 const pageCssWidth = pageFlip
                     ? pageFlip.getBoundsRect().pageWidth
                     : pageSize.width;
-                const requestedScale = Math.max(1.5, pageCssWidth * window.devicePixelRatio * zoom / pageSize.width);
+                const requestedScale = Math.max(1.5, pageCssWidth * window.devicePixelRatio / pageSize.width);
                 const maxScaleByPixels = Math.sqrt(6000000 / (pageSize.width * pageSize.height));
                 const renderScale = Math.min(requestedScale, maxScaleByPixels);
 
@@ -208,7 +234,7 @@
                 const pendingRender = pageRenderPromises.get(pageNum);
                 if (pendingRender) {
                     await pendingRender;
-                    return renderPage(pageNum, zoom);
+                    return renderPage(pageNum);
                 }
 
                 const renderPromise = (async () => {
@@ -239,23 +265,18 @@
                 const toolbarHeight = document.querySelector('.glass-toolbar').getBoundingClientRect().height;
                 const availableHeight = Math.min(1260, Math.max(180, window.innerHeight - toolbarHeight - 44));
                 const availableWidth = Math.max(160, window.innerWidth - 24);
-                const isMobile = window.matchMedia('(max-width: 600px)').matches;
-                const useSinglePage = isMobile || window.innerWidth < window.innerHeight;
-                const bookAspect = useSinglePage ? pageAspect : pageAspect * 2;
+                const bookAspect = singlePageMode() ? pageAspect : pageAspect * 2;
                 const width = Math.min(availableWidth, availableHeight * bookAspect);
                 const height = width / bookAspect;
 
-                const frame = document.getElementById('flipbook-frame');
-                frame.style.width = `${Math.floor(width)}px`;
-                frame.style.height = `${Math.floor(height)}px`;
+                fitWidth = Math.floor(width);
+                fitHeight = Math.floor(height);
+                updateZoomLayout();
             }
 
             fitFlipbook();
 
             // CẤU HÌNH THƯ VIỆN LẬT TRANG
-            const singlePageMode = () => (
-                window.matchMedia('(max-width: 600px)').matches || window.innerWidth < window.innerHeight
-            );
             const portraitThreshold = () => singlePageMode() ? 450 : 120;
             pageFlip = new St.PageFlip(flipbookEl, {
                 width: pageSize.width, height: pageSize.height,
@@ -268,26 +289,67 @@
                 maxShadowOpacity: 0.4
             });
 
-            pageFlip.loadFromHTML(document.querySelectorAll('.page'));
-            [0, totalPages - 1].forEach(pageIndex => {
-                const coverPage = pageFlip.getPage(pageIndex);
-                coverPage.setDensity('soft');
-                coverPage.setDrawingDensity('soft');
-            });
+            pageFlip.loadFromHTML(pdfPageElements);
+            function setCoverDensity() {
+                const density = singlePageMode() ? 'soft' : 'hard';
+                [0, totalPages - 1].forEach(pageIndex => {
+                    const coverPage = pageFlip.getPage(pageIndex);
+                    coverPage.setDensity(density);
+                    coverPage.setDrawingDensity(density);
+                });
+            }
+            setCoverDensity();
+            function getPdfPageNumber(pageIndex) {
+                return Math.max(1, Math.min(totalPages, pageIndex + 1));
+            }
+            function updateZoomLayout() {
+                const frame = document.getElementById('flipbook-frame');
+                const container = document.getElementById('flipbook-container');
+                const width = Math.round(fitWidth * currentZoom);
+                const height = Math.round(fitHeight * currentZoom);
+                const isZoomed = currentZoom > 1;
+
+                frame.style.width = `${width}px`;
+                frame.style.height = `${height}px`;
+                frame.style.marginLeft = isZoomed
+                    ? `${Math.max(0, (container.clientWidth - width) / 2)}px`
+                    : '';
+                frame.style.marginTop = isZoomed
+                    ? `${Math.max(0, (container.clientHeight - height) / 2)}px`
+                    : '';
+                container.style.overflow = isZoomed ? 'auto' : 'hidden';
+                container.style.justifyContent = isZoomed ? 'flex-start' : 'center';
+                container.style.alignItems = isZoomed ? 'flex-start' : 'center';
+
+                if (pageFlip) {
+                    const settings = pageFlip.getSettings();
+                    settings.minWidth = portraitThreshold() * currentZoom;
+                    settings.minHeight = Math.round(settings.minWidth / pageAspect);
+                    settings.maxWidth = 900 * currentZoom;
+                    settings.maxHeight = Math.round(settings.maxWidth / pageAspect);
+                    flipbookEl.style.maxWidth = `${settings.maxWidth * 2}px`;
+
+                    const currentPageIndex = pageFlip.getCurrentPageIndex();
+                    pageFlip.update();
+                    if (pageFlip.getCurrentPageIndex() !== currentPageIndex) {
+                        pageFlip.turnToPage(currentPageIndex);
+                    }
+                }
+            }
             function updateZoomDisplay() {
-                document.getElementById('flipbook-container').style.overflow = currentZoom > 1 ? 'auto' : 'hidden';
-                flipbookEl.style.transform = `scale(${currentZoom})`;
                 document.getElementById('zoom-text').innerText = `${Math.round(currentZoom * 100)}%`;
                 window.clearTimeout(zoomRenderTimer);
                 zoomRenderTimer = window.setTimeout(() => {
-                    const pageNumber = pageFlip.getCurrentPageIndex() + 1;
+                    const pageNumber = getPdfPageNumber(pageFlip.getCurrentPageIndex());
                     [pageNumber - 1, pageNumber, pageNumber + 1, pageNumber + 2].forEach(number => {
-                        renderPage(number, currentZoom);
+                        renderPage(number);
                     });
                 }, 120);
             }
             function setZoomLevel(zoom) {
+                if (pageFlip.getState() !== 'read') return;
                 currentZoom = Math.max(0.4, Math.min(3, zoom));
+                updateZoomLayout();
                 updateZoomDisplay();
             }
             updateZoomDisplay();
@@ -297,6 +359,8 @@
                 settings.minHeight = Math.round(settings.minWidth / pageAspect);
                 fitFlipbook();
                 pageFlip.update();
+                setCoverDensity();
+                updateZoomLayout();
                 requestAnimationFrame(updateZoomDisplay);
             });
 
@@ -310,7 +374,7 @@
             const flipAudio = document.getElementById('flip-sound');
             
             pageFlip.on('flip', (e) => {
-                const currentPage = Math.max(1, Math.min(totalPages, e.data + 1));
+                const currentPage = getPdfPageNumber(e.data);
                 document.getElementById('page-input').value = currentPage;
                 updateZoomDisplay();
 
@@ -341,7 +405,9 @@
             const btnSound = document.getElementById('btn-sound');
             btnSound.addEventListener('click', () => {
                 isSoundEnabled = !isSoundEnabled;
-                btnSound.innerText = isSoundEnabled ? '🔊' : '🔇';
+                btnSound.classList.toggle('is-muted', !isSoundEnabled);
+                btnSound.setAttribute('aria-label', isSoundEnabled ? 'Tắt âm thanh' : 'Bật âm thanh');
+                btnSound.setAttribute('aria-pressed', String(isSoundEnabled));
                 if(isSoundEnabled) { flipAudio.play().catch(()=>{}); }
             });
 
@@ -358,6 +424,10 @@
             const flipbookContainer = document.getElementById('flipbook-container');
             flipbookContainer.addEventListener('touchstart', event => {
                 if (event.touches.length === 2) {
+                    isPinching = true;
+                    pinchStartSwipeDistance = pageFlip.getSettings().swipeDistance;
+                    pageFlip.getSettings().swipeDistance = Number.MAX_SAFE_INTEGER;
+                    pageFlip.userStop({ x: 0, y: 0 }, true);
                     const [firstTouch, secondTouch] = event.touches;
                     pinchStartDistance = Math.hypot(
                         secondTouch.clientX - firstTouch.clientX,
@@ -378,7 +448,17 @@
                 setZoomLevel(pinchStartZoom * distance / pinchStartDistance);
             }, { passive: false, capture: true });
             flipbookContainer.addEventListener('touchend', event => {
-                if (event.touches.length < 2) pinchStartDistance = 0;
+                if (isPinching && event.touches.length < 2) {
+                    pageFlip.userStop({ x: 0, y: 0 }, true);
+                    isPinching = false;
+                    pinchStartDistance = 0;
+                    window.setTimeout(() => {
+                        if (pinchStartSwipeDistance !== null) {
+                            pageFlip.getSettings().swipeDistance = pinchStartSwipeDistance;
+                            pinchStartSwipeDistance = null;
+                        }
+                    }, 0);
+                }
             }, { passive: true });
 
             // NHẬP SỐ TRANG
@@ -387,7 +467,7 @@
                 if (e.key === 'Enter') {
                     let targetPage = parseInt(pageInput.value);
                     if (targetPage >= 1 && targetPage <= totalPages) {
-                        Promise.all([renderPage(targetPage), renderPage(targetPage+1)]).then(() => {
+                        Promise.all([renderPage(targetPage), renderPage(targetPage + 1)]).then(() => {
                             pageFlip.flip(targetPage - 1);
                         });
                     }

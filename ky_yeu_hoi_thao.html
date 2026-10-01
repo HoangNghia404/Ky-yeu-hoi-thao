@@ -141,8 +141,6 @@
         <div id="loading-text" style="font-size: 14px; color: #cbd5e1;">Đang thiết lập dữ liệu...</div>
     </div>
 
-    <audio id="flip-sound" src="https://actions.google.com/sounds/v1/foley/book_page_turn.ogg" preload="auto"></audio>
-
     <div id="flipbook-container">
         <div id="flipbook-frame">
             <div id="flipbook" class="flip-book"></div>
@@ -215,11 +213,82 @@
         
         let currentZoom = 1.0;
         let isSoundEnabled = true;
+        let flipAudioCtx = null;
         let zoomRenderTimer = 0;
         let fitWidth = 0;
         let fitHeight = 0;
         let isPinching = false;
         let pinchStartSwipeDistance = null;
+
+        function ensureFlipAudioContext() {
+            const AudioCtor = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtor) return null;
+            if (!flipAudioCtx) {
+                flipAudioCtx = new AudioCtor();
+            }
+            if (flipAudioCtx.state === 'suspended') {
+                flipAudioCtx.resume().catch(() => {});
+            }
+            return flipAudioCtx;
+        }
+
+        function playFlipSound() {
+            if (!isSoundEnabled) return;
+
+            const audioContext = ensureFlipAudioContext();
+            if (!audioContext) return;
+
+            const now = audioContext.currentTime;
+            const noiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * 0.28, audioContext.sampleRate);
+            const channelData = noiseBuffer.getChannelData(0);
+            let last = 0;
+
+            for (let i = 0; i < channelData.length; i++) {
+                const white = Math.random() * 2 - 1;
+                last = (last * 0.12) + (white * 0.88);
+                const envelope = Math.min(1, i / (channelData.length * 0.12)) * Math.exp(-i / (channelData.length * 0.65));
+                channelData[i] = last * envelope;
+            }
+
+            const noiseSource = audioContext.createBufferSource();
+            const noiseHighPass = audioContext.createBiquadFilter();
+            const noiseLowPass = audioContext.createBiquadFilter();
+            const noiseGain = audioContext.createGain();
+
+            noiseSource.buffer = noiseBuffer;
+            noiseHighPass.type = 'highpass';
+            noiseHighPass.frequency.setValueAtTime(160, now);
+            noiseLowPass.type = 'lowpass';
+            noiseLowPass.frequency.setValueAtTime(1800, now);
+            noiseLowPass.frequency.exponentialRampToValueAtTime(540, now + 0.28);
+
+            noiseGain.gain.setValueAtTime(0.0001, now);
+            noiseGain.gain.exponentialRampToValueAtTime(0.22, now + 0.02);
+            noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+
+            const oscillator = audioContext.createOscillator();
+            const toneGain = audioContext.createGain();
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(170, now);
+            oscillator.frequency.exponentialRampToValueAtTime(76, now + 0.24);
+
+            toneGain.gain.setValueAtTime(0.0001, now);
+            toneGain.gain.exponentialRampToValueAtTime(0.06, now + 0.04);
+            toneGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.26);
+
+            noiseSource.connect(noiseHighPass);
+            noiseHighPass.connect(noiseLowPass);
+            noiseLowPass.connect(noiseGain);
+            noiseGain.connect(audioContext.destination);
+
+            oscillator.connect(toneGain);
+            toneGain.connect(audioContext.destination);
+
+            noiseSource.start(now);
+            oscillator.start(now);
+            noiseSource.stop(now + 0.3);
+            oscillator.stop(now + 0.26);
+        }
 
         pdfjsLib.getDocument(pdfUrl).promise.then(async function(pdf) {
             pdfDoc = pdf;
@@ -410,17 +479,18 @@
             document.getElementById('flipbook-container').style.opacity = '1';
 
             // XỬ LÝ LẬT TRANG & ÂM THANH
-            const flipAudio = document.getElementById('flip-sound');
-            
+            ['pointerdown', 'touchstart', 'keydown'].forEach((eventName) => {
+                document.addEventListener(eventName, () => {
+                    ensureFlipAudioContext();
+                }, { once: true });
+            });
+
             pageFlip.on('flip', (e) => {
                 const currentPage = getPdfPageNumber(e.data);
                 document.getElementById('page-input').value = currentPage;
                 updateZoomDisplay();
 
-                if (isSoundEnabled) {
-                    flipAudio.currentTime = 0;
-                    flipAudio.play().catch(()=>{});
-                }
+                playFlipSound();
 
                 renderPage(currentPage);
                 renderPage(currentPage + 1); renderPage(currentPage + 2);
@@ -451,7 +521,9 @@
                 btnSound.classList.toggle('is-muted', !isSoundEnabled);
                 btnSound.setAttribute('aria-label', isSoundEnabled ? 'Tắt âm thanh' : 'Bật âm thanh');
                 btnSound.setAttribute('aria-pressed', String(isSoundEnabled));
-                if(isSoundEnabled) { flipAudio.play().catch(()=>{}); }
+                if (isSoundEnabled) {
+                    playFlipSound();
+                }
             });
 
             // PHÓNG TO / THU NHỎ & HIỂN THỊ %

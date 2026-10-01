@@ -13,6 +13,15 @@
             color: white;
         }
 
+        #page-background-video, #page-background-image, #page-background-shade {
+            position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none;
+        }
+        #page-background-video, #page-background-image {
+            z-index: 0; object-fit: cover; opacity: 0; transition: opacity 0.6s ease;
+        }
+        #page-background-video.is-visible, #page-background-image.is-visible { opacity: 1; }
+        #page-background-shade { z-index: 0; background: rgba(5, 10, 20, 0.28); }
+
         #loading-screen {
             position: absolute; inset: 0; z-index: 1000;
             background: #0f172a; display: flex; flex-direction: column;
@@ -32,6 +41,7 @@
             width: 100%; height: calc(100vh - 74px); height: calc(100dvh - 74px);
             opacity: 0; transition: opacity 0.8s ease;
             overflow: hidden;
+            position: relative; z-index: 1;
         }
         #flipbook-container.is-zoomed {
             cursor: grab;
@@ -136,6 +146,10 @@
 </head>
 <body>
 
+    <video id="page-background-video" autoplay muted loop playsinline aria-hidden="true"></video>
+    <img id="page-background-image" alt="" aria-hidden="true">
+    <div id="page-background-shade" aria-hidden="true"></div>
+
     <div id="loading-screen">
         <div class="spinner"></div>
         <div id="loading-text" style="font-size: 14px; color: #cbd5e1;">Đang thiết lập dữ liệu...</div>
@@ -203,6 +217,49 @@
 
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+
+        function initializePageBackground() {
+            const video = document.getElementById('page-background-video');
+            const image = document.getElementById('page-background-image');
+            const videoSources = ['background.mp4', 'background.webm', 'background.ogv'];
+            const imageSources = ['background.jpg', 'background.jpeg', 'background.png', 'background.webp', 'background.gif'];
+            let videoSourceIndex = 0;
+            let imageSourceIndex = 0;
+
+            function tryNextImage() {
+                if (imageSourceIndex >= imageSources.length) return;
+                image.src = imageSources[imageSourceIndex++];
+            }
+
+            function tryNextVideo() {
+                if (videoSourceIndex >= videoSources.length) {
+                    tryNextImage();
+                    return;
+                }
+                video.src = videoSources[videoSourceIndex++];
+                video.load();
+            }
+
+            video.addEventListener('canplay', () => {
+                video.classList.add('is-visible');
+                video.play().catch(() => {});
+            });
+            video.addEventListener('error', tryNextVideo);
+            image.addEventListener('load', () => image.classList.add('is-visible'));
+            image.addEventListener('error', tryNextImage);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden && video.currentSrc && video.paused) {
+                    video.play().catch(() => {});
+                }
+            });
+            document.addEventListener('pointerdown', () => {
+                if (video.currentSrc && video.paused) video.play().catch(() => {});
+            });
+
+            tryNextVideo();
+        }
+
+        initializePageBackground();
 
         const pdfUrl = 'book.pdf'; 
         let pdfDoc = null;
